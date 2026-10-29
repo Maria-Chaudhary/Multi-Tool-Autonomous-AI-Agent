@@ -1,0 +1,778 @@
+/* ==========================================================
+   RESEARCH COPILOT AI  ·  Aurora Midnight Theme
+   Deep navy glass panels, violet-to-cyan accents, soft glow.
+   Compatible with Gradio Blocks (v4, v5, v6)
+   ========================================================== */
+
+/* ---------- 1. Theme Variables ---------- */
+
+:root {
+    --bg-main: #070a14;
+    --bg-secondary: #0b1020;
+    --bg-panel: rgba(16, 23, 41, 0.72);
+    --bg-card: rgba(24, 34, 57, 0.80);
+    --bg-input: rgba(8, 13, 26, 0.85);
+
+    --border: rgba(120, 140, 190, 0.16);
+    --border-light: rgba(150, 168, 215, 0.26);
+
+    --text-primary: #eef2ff;
+    --text-secondary: #aab6d3;
+    --text-muted: #74829f;
+
+    --accent: #8b7cff;
+    --accent-light: #b0a6ff;
+    --accent-dark: #6a58ec;
+    --accent-cyan: #4cc9f0;
+    --accent-glow: rgba(139, 124, 255, 0.28);
+
+    --gradient-accent: linear-gradient(135deg, #9a8cff 0%, #6a58ec 55%, #4a7df0 100%);
+    --gradient-text: linear-gradient(90deg, #ffffff 0%, #cfc8ff 45%, #8fdcf7 100%);
+
+    --success: #42d6a4;
+    --danger: #ff6b86;
+
+    --radius-xl: 26px;
+    --radius-lg: 20px;
+    --radius-md: 14px;
+    --radius-sm: 10px;
+
+    --shadow-soft: 0 10px 40px rgba(0, 0, 0, 0.28);
+    --shadow-glow: 0 0 0 1px rgba(139, 124, 255, 0.18), 0 12px 40px rgba(80, 60, 200, 0.18);
+}
+
+/* ---------- 2. Base & Background ---------- */
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    background: var(--bg-main) !important;
+    color: var(--text-primary) !important;
+    font-family: Inter, "Segoe UI", system-ui, -apple-system, Arial, sans-serif !important;
+    -webkit-font-smoothing: antialiased;
+}
+
+.gradio-container {
+    position: relative;
+    max-width: 1500px !important;
+    margin: 0 auto !important;
+    padding: 26px !important;
+    color: var(--text-primary) !important;
+    background:
+        radial-gradient(ellipse 60% 40% at 8% 0%, rgba(106, 88, 236, 0.20), transparent 70%),
+        radial-gradient(ellipse 50% 35% at 100% 18%, rgba(76, 201, 240, 0.10), transparent 70%),
+        radial-gradient(ellipse 45% 40% at 55% 105%, rgba(139, 124, 255, 0.12), transparent 70%),
+        var(--bg-main) !important;
+}
+
+.gradio-container .block,
+.gradio-container .form,
+.gradio-container .wrap {
+    color: var(--text-primary);
+}
+
+.gradio-container label,
+.gradio-container .label-wrap {
+    color: var(--text-secondary);
+}
+
+::selection {
+    background: rgba(139, 124, 255, 0.45);
+    color: #ffffff;
+}
+
+/* ---------- 3. Hero Header ---------- */
+
+#copilot-header {
+    position: relative;
+    overflow: hidden;
+    padding: 38px 40px !important;
+    margin-bottom: 24px !important;
+
+    background:
+        radial-gradient(circle at 92% 10%, rgba(139, 124, 255, 0.32), transparent 34%),
+        radial-gradient(circle at 5% 120%, rgba(76, 201, 240, 0.16), transparent 40%),
+        linear-gradient(125deg, #18203a 0%, #101830 50%, #1d1941 100%) !important;
+
+    border: 1px solid rgba(165, 152, 255, 0.28);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-glow);
+}
+
+/* Decorative rings */
+#copilot-header::before,
+#copilot-header::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+}
+
+#copilot-header::before {
+    width: 260px;
+    height: 260px;
+    right: -80px;
+    top: -120px;
+    border: 1px solid rgba(190, 180, 255, 0.18);
+    box-shadow:
+        0 0 0 28px rgba(190, 180, 255, 0.03),
+        0 0 0 60px rgba(190, 180, 255, 0.02);
+}
+
+#copilot-header::after {
+    width: 140px;
+    height: 140px;
+    right: 90px;
+    bottom: -90px;
+    background: radial-gradient(circle, rgba(76, 201, 240, 0.25), transparent 70%);
+}
+
+#copilot-header h1 {
+    position: relative;
+    z-index: 2;
+    display: block;
+    margin: 0 0 14px 0 !important;
+    font-size: clamp(28px, 3.4vw, 42px) !important;
+    line-height: 1.2;
+    font-weight: 800 !important;
+    letter-spacing: -1.1px;
+
+    /* Solid white text so the title is always visible */
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    background: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    text-shadow: 0 2px 24px rgba(139, 124, 255, 0.60);
+}
+
+/* Gradient accent line under the title */
+#copilot-header h1::after {
+    content: "";
+    display: block;
+    width: 72px;
+    height: 4px;
+    margin-top: 14px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #9a8cff, #4cc9f0);
+    box-shadow: 0 0 14px rgba(139, 124, 255, 0.55);
+}
+
+#copilot-header p {
+    position: relative;
+    z-index: 1;
+    max-width: 720px;
+    margin: 0 !important;
+    color: #b9c5e0 !important;
+    font-size: 15.5px !important;
+    line-height: 1.85;
+}
+
+/* ---------- 4. Workspace Panels (Glass) ---------- */
+
+#copilot-workspace {
+    align-items: stretch !important;
+    gap: 22px !important;
+}
+
+#copilot-sidebar,
+#copilot-chat-panel {
+    min-width: 0;
+    padding: 24px !important;
+    background: var(--bg-panel) !important;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-soft);
+}
+
+#copilot-sidebar {
+    min-width: 250px;
+}
+
+#copilot-chat-panel {
+    flex: 1;
+}
+
+#copilot-sidebar h2,
+#copilot-sidebar h3,
+#copilot-chat-panel h2,
+#copilot-chat-panel h3 {
+    color: var(--text-primary) !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.3px;
+}
+
+/* Accent bar before section headings */
+#copilot-sidebar h3,
+#copilot-chat-panel h3 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#copilot-sidebar h3::before,
+#copilot-chat-panel h3::before {
+    content: "";
+    width: 4px;
+    height: 18px;
+    border-radius: 4px;
+    background: var(--gradient-accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* Capability list with check-style markers */
+#copilot-sidebar ul {
+    list-style: none !important;
+    padding-left: 0 !important;
+    margin: 8px 0 !important;
+}
+
+#copilot-sidebar li {
+    position: relative;
+    margin: 7px 0;
+    padding: 9px 12px 9px 36px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    background: rgba(139, 124, 255, 0.06);
+    border: 1px solid rgba(139, 124, 255, 0.12);
+    border-radius: 11px;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+#copilot-sidebar li::before {
+    content: "✦";
+    position: absolute;
+    left: 13px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent-light);
+    font-size: 12px;
+}
+
+#copilot-sidebar li:hover {
+    background: rgba(139, 124, 255, 0.12);
+    border-color: rgba(139, 124, 255, 0.30);
+    transform: translateX(3px);
+}
+
+#copilot-sidebar em {
+    display: block;
+    margin-top: 10px;
+    padding: 12px 14px;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.6;
+    background: rgba(76, 201, 240, 0.05);
+    border-left: 3px solid var(--accent-cyan);
+    border-radius: 0 10px 10px 0;
+}
+
+#copilot-sidebar hr,
+#copilot-chat-panel hr {
+    border-color: var(--border) !important;
+}
+
+/* ---------- 5. Chatbot ---------- */
+
+#copilot-chatbot {
+    overflow: hidden !important;
+    min-height: 420px;
+    border: 1px solid var(--border) !important;
+    border-radius: 18px !important;
+    background:
+        radial-gradient(ellipse at 50% 0%, rgba(139, 124, 255, 0.06), transparent 60%),
+        var(--bg-secondary) !important;
+    box-shadow: inset 0 2px 20px rgba(0, 0, 0, 0.25);
+}
+
+#copilot-chatbot > div {
+    border-radius: 18px !important;
+}
+
+/* Message bubbles (works across Gradio versions) */
+
+#copilot-chatbot .message,
+#copilot-chatbot [data-testid="user"],
+#copilot-chatbot [data-testid="bot"] {
+    border-radius: 18px !important;
+    line-height: 1.75;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+#copilot-chatbot .message.user,
+#copilot-chatbot [data-testid="user"] {
+    background: var(--gradient-accent) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(200, 192, 255, 0.30) !important;
+    border-bottom-right-radius: 6px !important;
+}
+
+#copilot-chatbot .message.bot,
+#copilot-chatbot [data-testid="bot"] {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-light) !important;
+    border-bottom-left-radius: 6px !important;
+}
+
+#copilot-chatbot .message.user *,
+#copilot-chatbot [data-testid="user"] * {
+    color: #ffffff !important;
+}
+
+#copilot-chatbot p,
+#copilot-chatbot li {
+    color: inherit;
+    line-height: 1.75;
+}
+
+#copilot-chatbot h1,
+#copilot-chatbot h2,
+#copilot-chatbot h3 {
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+}
+
+#copilot-chatbot pre {
+    overflow-x: auto;
+    padding: 16px;
+    background: #060b17 !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: 12px !important;
+}
+
+#copilot-chatbot code {
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace !important;
+    font-size: 0.9em;
+}
+
+#copilot-chatbot a {
+    color: var(--accent-light) !important;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(176, 166, 255, 0.35);
+}
+
+#copilot-chatbot a:hover {
+    border-bottom-color: var(--accent-light);
+}
+
+#copilot-chatbot table {
+    display: block;
+    overflow-x: auto;
+    border-collapse: collapse;
+}
+
+#copilot-chatbot th,
+#copilot-chatbot td {
+    padding: 9px 12px;
+    border: 1px solid var(--border-light);
+}
+
+#copilot-chatbot th {
+    background: rgba(139, 124, 255, 0.12);
+}
+
+/* Scrollbars */
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #3a4868 transparent;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3a4868;
+    border-radius: 20px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #56678c;
+}
+
+/* ---------- 6. Message Input ---------- */
+
+#copilot-prompt {
+    margin-top: 16px !important;
+}
+
+#copilot-prompt textarea,
+#copilot-prompt input {
+    width: 100%;
+    min-height: 58px;
+    padding: 16px 18px !important;
+
+    background: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+
+    border: 1px solid var(--border-light) !important;
+    border-radius: 16px !important;
+
+    font-family: Inter, "Segoe UI", system-ui, Arial, sans-serif !important;
+    font-size: 14.5px !important;
+    line-height: 1.65 !important;
+
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+#copilot-prompt textarea::placeholder,
+#copilot-prompt input::placeholder {
+    color: var(--text-muted) !important;
+    opacity: 1;
+}
+
+#copilot-prompt textarea:focus,
+#copilot-prompt input:focus {
+    background: rgba(11, 18, 36, 0.95) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 4px var(--accent-glow), 0 8px 24px rgba(80, 60, 200, 0.18) !important;
+    outline: none !important;
+}
+
+/* ---------- 7. Buttons ---------- */
+
+#copilot-send,
+#copilot-clear {
+    min-height: 48px;
+    border-radius: 14px !important;
+    font-size: 14.5px !important;
+    font-weight: 650 !important;
+    letter-spacing: 0.1px;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+}
+
+#copilot-send {
+    position: relative;
+    overflow: hidden;
+    background: var(--gradient-accent) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(200, 192, 255, 0.35) !important;
+    box-shadow: 0 8px 22px rgba(106, 88, 236, 0.32);
+}
+
+/* Shine sweep on hover */
+#copilot-send::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -120%;
+    width: 60%;
+    height: 100%;
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+    transform: skewX(-20deg);
+    transition: left 0.6s ease;
+    pointer-events: none;
+}
+
+#copilot-send:hover::after {
+    left: 140%;
+}
+
+#copilot-send:hover {
+    box-shadow: 0 12px 30px rgba(106, 88, 236, 0.48);
+    transform: translateY(-2px);
+}
+
+#copilot-send:active {
+    transform: translateY(0);
+}
+
+#copilot-clear {
+    background: rgba(26, 36, 57, 0.85) !important;
+    color: #d5def1 !important;
+    border: 1px solid var(--border-light) !important;
+}
+
+#copilot-clear:hover {
+    background: rgba(255, 107, 134, 0.10) !important;
+    border-color: rgba(255, 107, 134, 0.45) !important;
+    color: #ffc2cd !important;
+    transform: translateY(-1px);
+}
+
+#copilot-sidebar button {
+    border-radius: 10px !important;
+    transition: all 0.18s ease;
+}
+
+button:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+    transform: none !important;
+}
+
+/* ---------- 8. File Upload ---------- */
+
+#copilot-upload {
+    padding: 16px !important;
+    background:
+        linear-gradient(rgba(10, 16, 32, 0.9), rgba(10, 16, 32, 0.9)) padding-box,
+        repeating-linear-gradient(135deg, #5a6a92 0 8px, transparent 8px 14px) border-box !important;
+    border: 1.5px dashed #5a6a92 !important;
+    border-radius: 16px !important;
+    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+#copilot-upload:hover {
+    background: rgba(16, 26, 50, 0.95) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 4px var(--accent-glow);
+}
+
+#copilot-upload label {
+    color: var(--text-secondary) !important;
+}
+
+#copilot-upload button {
+    background: #202b43 !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-light) !important;
+    border-radius: 9px !important;
+}
+
+#copilot-upload button:hover {
+    background: #2a3754 !important;
+}
+
+#copilot-upload .file-preview,
+#copilot-upload .upload-container {
+    border-radius: 12px !important;
+}
+
+/* ---------- 9. Inputs, Dropdowns & Checkboxes ---------- */
+
+.gradio-container input:not([type="checkbox"]):not([type="radio"]),
+.gradio-container textarea,
+.gradio-container select {
+    color: var(--text-primary) !important;
+    background-color: var(--bg-input) !important;
+    border-color: var(--border-light) !important;
+    border-radius: 12px !important;
+}
+
+.gradio-container input::placeholder,
+.gradio-container textarea::placeholder {
+    color: var(--text-muted) !important;
+}
+
+.gradio-container input:focus,
+.gradio-container textarea:focus,
+.gradio-container select:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-glow) !important;
+}
+
+.gradio-container input[type="checkbox"],
+.gradio-container input[type="radio"] {
+    accent-color: var(--accent);
+}
+
+.gradio-container fieldset {
+    border-color: var(--border) !important;
+    border-radius: 12px !important;
+}
+
+/* ---------- 10. Markdown & Content ---------- */
+
+.gradio-container .prose {
+    color: var(--text-secondary) !important;
+}
+
+.gradio-container .prose h1,
+.gradio-container .prose h2,
+.gradio-container .prose h3,
+.gradio-container .prose strong {
+    color: var(--text-primary) !important;
+}
+
+.gradio-container .prose blockquote {
+    border-left-color: var(--accent) !important;
+    color: var(--text-secondary) !important;
+}
+
+.gradio-container .prose code {
+    color: #cdc4ff !important;
+    background: rgba(139, 124, 255, 0.14) !important;
+    border-radius: 6px;
+    padding: 2px 6px;
+}
+
+.gradio-container .prose pre {
+    background: #060b17 !important;
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+}
+
+/* ---------- 11. Footer ---------- */
+
+#copilot-footer {
+    margin-top: 18px;
+    padding: 20px 8px;
+    color: var(--text-muted) !important;
+    text-align: center;
+    font-size: 12.5px;
+    line-height: 1.8;
+    letter-spacing: 0.3px;
+    border-top: 1px solid var(--border);
+}
+
+#copilot-footer a {
+    color: var(--accent-light) !important;
+    text-decoration: none;
+}
+
+/* ---------- 12. Alerts & Status ---------- */
+
+.gradio-container .error,
+.gradio-container .warning,
+.gradio-container .info {
+    border-radius: 12px !important;
+}
+
+.gradio-container .error {
+    border: 1px solid rgba(255, 107, 134, 0.40) !important;
+}
+
+.gradio-container .info {
+    border: 1px solid rgba(139, 124, 255, 0.30) !important;
+}
+
+/* Loading progress bar */
+.gradio-container .progress-bar,
+.gradio-container .progress-level-inner {
+    background: var(--gradient-accent) !important;
+}
+
+/* ---------- 13. Entrance Animations ---------- */
+
+@keyframes copilot-fade-up {
+    from {
+        opacity: 0;
+        transform: translateY(14px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#copilot-header {
+    animation: copilot-fade-up 0.6s ease both;
+}
+
+#copilot-sidebar {
+    animation: copilot-fade-up 0.6s ease 0.12s both;
+}
+
+#copilot-chat-panel {
+    animation: copilot-fade-up 0.6s ease 0.22s both;
+}
+
+/* ---------- 14. Responsive Layout ---------- */
+
+@media (min-width: 1200px) {
+    .gradio-container {
+        padding: 30px !important;
+    }
+
+    #copilot-sidebar,
+    #copilot-chat-panel {
+        padding: 26px !important;
+    }
+}
+
+@media (max-width: 900px) {
+    .gradio-container {
+        padding: 14px !important;
+    }
+
+    #copilot-header {
+        padding: 28px 24px !important;
+    }
+
+    #copilot-workspace {
+        gap: 14px !important;
+    }
+
+    #copilot-sidebar,
+    #copilot-chat-panel {
+        padding: 16px !important;
+    }
+
+    #copilot-chatbot {
+        min-height: 360px;
+    }
+}
+
+@media (max-width: 600px) {
+    .gradio-container {
+        padding: 10px !important;
+    }
+
+    #copilot-header {
+        padding: 22px 18px !important;
+        margin-bottom: 14px !important;
+        border-radius: 18px !important;
+    }
+
+    #copilot-header h1 {
+        font-size: 26px !important;
+        letter-spacing: -0.6px;
+    }
+
+    #copilot-header p {
+        font-size: 13px !important;
+        line-height: 1.7;
+    }
+
+    #copilot-sidebar,
+    #copilot-chat-panel {
+        padding: 13px !important;
+        border-radius: 16px !important;
+    }
+
+    #copilot-chatbot {
+        min-height: 320px;
+    }
+
+    #copilot-prompt textarea,
+    #copilot-prompt input {
+        font-size: 16px !important;
+    }
+
+    #copilot-send,
+    #copilot-clear {
+        min-height: 46px;
+    }
+}
+
+/* ---------- 15. Accessibility & Motion ---------- */
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--accent-light) !important;
+    outline-offset: 3px !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+}
