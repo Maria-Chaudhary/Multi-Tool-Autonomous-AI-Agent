@@ -199,7 +199,7 @@ It also provides hands-on experience with AI agents, LLM integration, tool calli
 BS Information Technology Graduate | AI & Python Developer
 
 - GitHub: [Maria-Chaudhary](https://github.com/Maria-Chaudhary)
-- LinkedIn: [Add your LinkedIn profile](https://www.linkedin.com/in/maria-rauf-925258279/)
+- LinkedIn: [Maria Rauf](https://www.linkedin.com/in/maria-rauf-925258279/)
 
 ---
 
