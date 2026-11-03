@@ -58,6 +58,27 @@ Instructions:
 - Keep answers concise and relevant.
 - Do not invent sources, URLs, references, or facts.
 
+TOOL USAGE RULES:
+
+1. When using web_search, provide exactly one argument:
+   {"query": "your search query"}
+
+2. Never provide cursor, id, page, or other arguments
+   to web_search.
+
+3. When using calculator, provide exactly:
+   {"expression": "your mathematical expression"}
+
+4. Do not invent tool names or tool arguments.
+
+5. Use the results returned by the tools.
+   Do not attempt to paginate or request additional
+   search results using cursor or id.
+
+6. When sufficient information has been collected,
+   provide the final answer without requesting more tools.
+
+
 SOURCE CITATION RULES:
 - When web search results are available, cite important factual
   claims using the exact reference IDs provided in the results.
@@ -191,32 +212,19 @@ def normalize_history(history):
 
     return clean
 
-def run_tool_call(tool_call):
-    """Execute a single tool call and return its result."""
-    tool_name = tool_call.get("name")
-    tool_args = tool_call.get("args", {}) or {}
+def get_tool_model():
+    """Model with tools bound for agent execution."""
+    global _tool_model
 
-    selected_tool = next(
-        (item for item in tools if item.name == tool_name),
-        None,
-    )
+    if _tool_model is None:
+        _tool_model = get_base_model().bind_tools(
+            tools,
+            tool_choice="auto",
+        )
 
-    if selected_tool is None:
-        return "Unknown tool requested."
+    return _tool_model
 
-    try:
-        result = selected_tool.invoke(tool_args)
-        result = str(result)
 
-        # Preserve structured web results so their URLs are not truncated.
-        if tool_name == "web_search":
-            return result
-
-        return result[:MAX_TOOL_RESULT_CHARS]
-
-    except Exception as exc:
-        return f"Tool failed: {type(exc).__name__}: {exc}"
-    
 def prepare_tool_result(tool_name, result, sources):
     """Assign consistent reference IDs to web search results."""
     if tool_name != "web_search":
@@ -258,11 +266,12 @@ def prepare_tool_result(tool_name, result, sources):
 
     except (ValueError, TypeError, AttributeError):
         return result
+
 def run_agent(question, history, trace=None):
     """Run the tool-calling agent and collect web sources."""
+
     if trace is None:
         trace = []
-        sources=[]
 
     sources = []
 
@@ -273,6 +282,7 @@ def run_agent(question, history, trace=None):
     ]
 
     for _ in range(MAX_TOOL_ROUNDS + 1):
+
         response = get_tool_model().invoke(messages)
         messages.append(response)
 
@@ -282,9 +292,11 @@ def run_agent(question, history, trace=None):
             return content_to_text(response.content), sources
 
         for index, tool_call in enumerate(tool_calls):
+
             tool_name = tool_call.get("name") or "tool"
 
             if index < MAX_TOOLS_PER_ROUND:
+
                 trace.append(tool_name)
 
                 tool_result = run_tool_call(tool_call)
@@ -294,6 +306,7 @@ def run_agent(question, history, trace=None):
                     tool_result,
                     sources,
                 )
+
             else:
                 tool_result = "Skipped: too many tool calls requested at once."
 
@@ -304,11 +317,13 @@ def run_agent(question, history, trace=None):
                 )
             )
 
+    # Generate the final response without allowing additional tool calls.
     messages.append(
         HumanMessage(
             content=(
-                "Using the available results, give a concise final answer. "
-                "Do not call any more tools. Follow the source citation rules."
+                "Now provide your final answer using the available tool results. "
+                "Do not request or call any more tools. "
+                "Follow the source citation rules."
             )
         )
     )
@@ -316,7 +331,6 @@ def run_agent(question, history, trace=None):
     final_response = get_base_model().invoke(messages)
 
     return content_to_text(final_response.content), sources
-
 
 def format_sources(sources):
     """Format collected sources as clickable Markdown links."""
@@ -671,6 +685,33 @@ def dashboard(state, working=False):
     )
 
 
+def run_tool_call(tool_call):
+    """Execute a single tool call and return its result."""
+
+    tool_name = tool_call.get("name")
+    tool_args = tool_call.get("args", {}) or {}
+
+    selected_tool = next(
+        (item for item in tools if item.name == tool_name),
+        None,
+    )
+
+    if selected_tool is None:
+        return "Unknown tool requested."
+
+    try:
+        result = selected_tool.invoke(tool_args)
+        result = str(result)
+
+        # Preserve structured web results.
+        if tool_name == "web_search":
+            return result
+
+        return result[:MAX_TOOL_RESULT_CHARS]
+
+    except Exception as exc:
+        return f"Tool failed: {type(exc).__name__}: {exc}"
+
 def add_log(state, kind, ico, text):
     state["log"].append((kind, ico, text, now_label()))
     state["log"] = state["log"][-MAX_LOG_ENTRIES:]
@@ -679,6 +720,8 @@ def add_log(state, kind, ico, text):
 # ---------------- CHAT FUNCTION ----------------
 
 def respond(user_message, history, uploaded_file, verify_claims, state):
+    trace = []
+    sources = []
     history = normalize_history(history)
     state = state or new_state()
     question = (user_message or "").strip()
