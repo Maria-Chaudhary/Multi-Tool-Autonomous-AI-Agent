@@ -1,0 +1,9 @@
+
+gradio
+langchain
+langchain-groq
+langchain-community
+duckduckgo-search
+python-dotenv
+pypdf
+python-docx

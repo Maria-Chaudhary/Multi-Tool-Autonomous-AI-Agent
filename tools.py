@@ -1,5 +1,5 @@
 """Tools for the Multi-tool Autonomous AI Research Agent."""
-
+import json
 import ast
 import operator
 from pathlib import Path
@@ -16,32 +16,66 @@ _search_engine = None
 
 
 def _get_search_engine():
-    """Create the search engine on first use so a missing package
-    does not crash the whole app at startup."""
+    """Create the structured web search engine on first use."""
     global _search_engine
 
     if _search_engine is None:
-        from langchain_community.tools import DuckDuckGoSearchRun
+        from langchain_community.tools import DuckDuckGoSearchResults
 
-        _search_engine = DuckDuckGoSearchRun()
+        _search_engine = DuckDuckGoSearchResults(
+            output_format="list",
+            max_results=5,
+        )
 
     return _search_engine
 
 
 @tool
 def web_search(query: str) -> str:
-    """Search the web for information relevant to a research question."""
+    """Search the web and return source titles, URLs, and snippets."""
     try:
-        result = _get_search_engine().run(query)
+        results = _get_search_engine().invoke(query)
 
-        if not result:
-            return "No search results found."
+        if not results:
+            return json.dumps({
+                "type": "web_search_results",
+                "results": [],
+                "message": "No search results found.",
+            })
 
-        return str(result)[:MAX_SEARCH_CHARS]
+        structured_results = []
+
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+
+            url = str(item.get("link") or item.get("url") or "").strip()
+            title = str(item.get("title") or "Untitled source").strip()
+            snippet = str(item.get("snippet") or "").strip()
+
+            # Only retain actual web URLs.
+            if not url.startswith(("https://", "http://")):
+                continue
+
+            structured_results.append({
+                "id": len(structured_results) + 1,
+                "title": title,
+                "url": url,
+                "snippet": snippet[:300],
+            })
+
+        payload = {
+            "type": "web_search_results",
+            "query": query,
+            "results": structured_results,
+        }
+
+        output = json.dumps(payload, ensure_ascii=False)
+
+        return output
 
     except Exception as exc:
         return f"Web search failed: {type(exc).__name__}: {exc}"
-
 
 # Safe basic calculator: does not use eval().
 _ALLOWED_OPERATORS = {
