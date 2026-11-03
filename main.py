@@ -3,12 +3,16 @@
 Control-panel UI: sidebar, live agent-brain dashboard, action cards,
 stats row, activity log and the chat workspace.
 """
-import json
 import html
 import inspect
+import json
 import os
+import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 import gradio as gr
 from dotenv import load_dotenv
@@ -26,7 +30,13 @@ from verifier import verify_answer
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-CUSTOM_CSS = (BASE_DIR / "style.css").read_text(encoding="utf-8")
+
+try:
+    CUSTOM_CSS = (BASE_DIR / "style.css").read_text(encoding="utf-8")
+except OSError:
+    print("WARNING: style.css not found. The app will use default styling.")
+    CUSTOM_CSS = ""
+
 
 # ---------------- CONFIGURATION ----------------
 
@@ -35,15 +45,48 @@ MODEL_NAME = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 MAX_QUESTION_CHARS = 1500
 MAX_DOCUMENT_CHARS = 2500
 MAX_TOOL_RESULT_CHARS = 1200
+MAX_SEARCH_RESULT_CHARS = 2600
+MAX_FINAL_RESULTS_CHARS = 4000
 MAX_TOOL_ROUNDS = 2
 MAX_TOOLS_PER_ROUND = 2
-MAX_REPLY_TOKENS = 700
+MAX_REPLY_TOKENS = 900
 MAX_HISTORY_MESSAGES = 4
 MAX_HISTORY_CHARS = 700
+
+# "low" makes gpt-oss answer much faster and leaves more tokens for the
+# visible reply. Use low / medium / high, or "off" to disable.
+REASONING_EFFORT = os.getenv("GROQ_REASONING_EFFORT", "low").strip().lower()
+
+
+class Budget(NamedTuple):
+    """How much work one question may use."""
+    reply_tokens: int
+    tool_rounds: int
+    tools_per_round: int
+    final_results_chars: int
+
+
+# Normal questions: quick, small answers.
+SIMPLE_BUDGET = Budget(
+    reply_tokens=MAX_REPLY_TOKENS,
+    tool_rounds=MAX_TOOL_ROUNDS,
+    tools_per_round=MAX_TOOLS_PER_ROUND,
+    final_results_chars=MAX_FINAL_RESULTS_CHARS,
+)
+
+# Research questions (several items, comparisons, recommendations):
+# several searches at once, then one long final answer.
+DEEP_BUDGET = Budget(
+    reply_tokens=2600,
+    tool_rounds=1,
+    tools_per_round=5,
+    final_results_chars=6500,
+)
 
 # Estimated manual research time saved per answered question (seconds).
 SECONDS_SAVED_PER_ANSWER = 600
 MAX_LOG_ENTRIES = 8
+
 SYSTEM_PROMPT = """
 You are a helpful autonomous AI research assistant.
 
@@ -57,6 +100,12 @@ Instructions:
 - Use uploaded document text when answering document questions.
 - Keep answers concise and relevant.
 - Do not invent sources, URLs, references, or facts.
+- Answer EVERY part of the request. If the user asks for N items, give
+  all N, then the comparison and the recommendation they asked for.
+- If the user asks you to research, search, or provide sources, you MUST
+  call web_search before answering.
+- For a request with several topics, call web_search once per topic in the
+  same step (up to 5 calls), each with a short specific query.
 
 TOOL USAGE RULES:
 
@@ -89,6 +138,17 @@ SOURCE CITATION RULES:
 - Do not create fake URLs.
 - If no web sources are available, do not add web citations.
 """
+
+
+def build_system_prompt(extra=""):
+    """System prompt with today's date, so searches use the right year."""
+    return (
+        SYSTEM_PROMPT
+        + f"\nToday's date is {date.today().isoformat()}.\n"
+        + extra
+    )
+
+
 # ---------------- MODEL SETUP ----------------
 
 _base_model = None
@@ -104,15 +164,25 @@ def get_base_model():
 
         if not api_key:
             raise RuntimeError(
-                "GROQ_API_KEY is missing. Set it in your environment."
+                "GROQ_API_KEY is missing. Set it in your environment "
+                "or .env file."
             )
 
-        _base_model = ChatGroq(
+        model_kwargs = dict(
             model=MODEL_NAME,
             temperature=0.2,
             max_tokens=MAX_REPLY_TOKENS,
             api_key=api_key,
+            timeout=90,
+            max_retries=2,
         )
+
+        if "gpt-oss" in MODEL_NAME.lower() and REASONING_EFFORT in (
+            "low", "medium", "high"
+        ):
+            model_kwargs["reasoning_effort"] = REASONING_EFFORT
+
+        _base_model = ChatGroq(**model_kwargs)
 
     return _base_model
 
@@ -128,6 +198,10 @@ def get_tool_model():
 
 
 # ---------------- HELPER FUNCTIONS ----------------
+
+SOURCES_MARKER = "\n\n---\n### 🔗 Sources & References"
+VERIFY_MARKER = "\n\n---\n### 🔍 Claim Verification"
+
 
 def content_to_text(content):
     """Convert any Gradio/LangChain content format into plain text."""
@@ -158,10 +232,16 @@ def content_to_text(content):
 
 
 def strip_verification(text):
-    """Remove the verification report so it is not sent back to the model."""
-    marker = "\n\n---\n### 🔍 Claim Verification"
-    index = text.find(marker)
-    return text[:index] if index != -1 else text
+    """Remove the verification report and source list from old answers,
+    so they are not sent back to the model."""
+    cut = len(text)
+
+    for marker in (VERIFY_MARKER, SOURCES_MARKER):
+        index = text.find(marker)
+        if index != -1:
+            cut = min(cut, index)
+
+    return text[:cut]
 
 
 def get_recent_messages(history):
@@ -212,148 +292,565 @@ def normalize_history(history):
 
     return clean
 
-def get_tool_model():
-    """Model with tools bound for agent execution."""
-    global _tool_model
 
-    if _tool_model is None:
-        _tool_model = get_base_model().bind_tools(
-            tools,
-            tool_choice="auto",
+def is_tool_failure(exc):
+    """True when Groq rejected a malformed or unexpected tool call."""
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "tool_use_failed",
+            "tool choice is none",
+            "failed_generation",
+            "tool call validation",
+            "tool_call",
+        )
+    )
+
+
+def friendly_error(exc):
+    """Turn raw API errors into short, readable messages."""
+    text = str(exc)
+    low = text.lower()
+
+    if "GROQ_API_KEY" in text:
+        return text
+
+    if (
+        "413" in text
+        or "429" in text
+        or "tokens per minute" in low
+        or "rate_limit_exceeded" in low
+        or "rate limit" in low
+    ):
+        return (
+            "Groq's rate or token limit was reached. Wait a moment, or "
+            "shorten your question or document, then try again."
         )
 
-    return _tool_model
+    if "401" in text or "invalid api key" in low:
+        return "Groq rejected the API key. Check GROQ_API_KEY and try again."
+
+    if is_tool_failure(exc):
+        return (
+            "The model produced an invalid tool call. "
+            "Please try again or rephrase your question."
+        )
+
+    if "timeout" in low or "timed out" in low or "connection" in low:
+        return (
+            "Could not reach Groq. Check your internet connection "
+            "and try again."
+        )
+
+    return f"An error occurred: {text}"
+
+
+
+def was_truncated(response):
+    """True when the model stopped because it ran out of tokens."""
+    meta = getattr(response, "response_metadata", None) or {}
+    return meta.get("finish_reason") == "length"
+
+
+def rate_limit_wait(exc):
+    """Seconds to wait before retrying a Groq rate limit, else None."""
+    text = str(exc)
+    low = text.lower()
+
+    if "413" in text or "429" not in text and "rate_limit" not in low:
+        return None
+
+    match = re.search(
+        r"try again in\s*(?:(\d+)m(?!s))?\s*(?:(\d+(?:\.\d+)?)s)?\s*(?:(\d+(?:\.\d+)?)ms)?",
+        low,
+    )
+    wait = 5.0
+
+    if match and any(match.groups()):
+        minutes, seconds, millis = match.groups()
+        wait = (
+            float(minutes or 0) * 60
+            + float(seconds or 0)
+            + float(millis or 0) / 1000
+            + 0.5
+        )
+
+    # Do not make the user wait minutes (for example daily limits).
+    return wait if wait <= 30 else None
+
+
+def invoke_with_retry(model, messages, **kwargs):
+    """Call the model; wait and retry when Groq's per-minute limit is hit."""
+    for attempt in range(3):
+        try:
+            return model.invoke(messages, **kwargs)
+        except Exception as exc:
+            wait = rate_limit_wait(exc)
+
+            if wait is None or attempt == 2:
+                raise
+
+            time.sleep(wait)
+
+
+RESEARCH_WORDS = re.compile(
+    r"\b(search|sources?|references?|research|compare|comparison|"
+    r"strategies|recommend|analy[sz]e|analysis|pros and cons|report)\b",
+    re.IGNORECASE,
+)
+COUNTED_ITEMS = re.compile(
+    r"\b(\d+|three|four|five|six|seven|eight|nine|ten)\b[^.?!]{0,40}"
+    r"\b(ways|strategies|tips|options|methods|ideas|tools|steps)\b",
+    re.IGNORECASE,
+)
+
+
+def is_complex_request(question):
+    """Detect research-style questions that need a long, multi-search reply."""
+    text = question or ""
+    hits = len(set(m.lower() for m in RESEARCH_WORDS.findall(text)))
+
+    return bool(
+        len(text) > 350
+        or hits >= 3
+        or (hits >= 1 and COUNTED_ITEMS.search(text))
+    )
+
+
+# ---------------- TOOL EXECUTION ----------------
+
+def sanitize_tool_args(tool_name, args):
+    """Keep only the arguments each tool really accepts.
+
+    Models sometimes invent extra arguments (cursor, id, page ...).
+    """
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except ValueError:
+            args = {"query": args, "expression": args}
+
+    if not isinstance(args, dict):
+        args = {}
+
+    def first_text(*keys):
+        for key in keys:
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        for value in args.values():
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    if tool_name == "web_search":
+        return {"query": first_text("query", "q", "search")[:300]}
+
+    if tool_name == "calculator":
+        return {"expression": first_text("expression", "expr")[:200]}
+
+    return args
+
+
+def run_tool_call(tool_call):
+    """Execute a single tool call and return its result."""
+
+    tool_name = tool_call.get("name")
+    tool_args = tool_call.get("args", {}) or {}
+
+    selected_tool = next(
+        (item for item in tools if item.name == tool_name),
+        None,
+    )
+
+    if selected_tool is None:
+        return "Unknown tool requested."
+
+    try:
+        result = str(selected_tool.invoke(tool_args))
+
+        # Structured web results are shortened later, result by result.
+        if tool_name == "web_search":
+            return result
+
+        return result[:MAX_TOOL_RESULT_CHARS]
+
+    except Exception as exc:
+        return f"Tool failed: {type(exc).__name__}: {exc}"
+
+
+def format_search_for_model(data, sources):
+    """Turn structured search results into compact numbered text.
+
+    Registers each shown result in `sources` with a stable reference ID.
+    """
+    query = data.get("query", "")
+    results = data.get("results") or []
+
+    if not results:
+        reason = data.get("error") or "No search results found."
+        return (
+            f"Web search returned no results ({reason}). "
+            "Answer without search results and say so."
+        )
+
+    header = f'Web search results for "{query}":'
+    lines = [header]
+    used = len(header)
+
+    for item in results:
+        url = str(item.get("url", "")).strip()
+
+        if not url.startswith(("https://", "http://")):
+            continue
+
+        existing = next((s for s in sources if s["url"] == url), None)
+        source_id = existing["id"] if existing else len(sources) + 1
+        title = str(item.get("title") or "Untitled source").strip()
+        snippet = str(item.get("snippet") or "").strip()
+
+        block = f"[{source_id}] {title}\nURL: {url}\nSnippet: {snippet}"
+
+        if used + len(block) > MAX_SEARCH_RESULT_CHARS:
+            break
+
+        if not existing:
+            sources.append({"id": source_id, "title": title, "url": url})
+
+        lines.append(block)
+        used += len(block)
+
+    if len(lines) == 1:
+        return "Web search returned no usable results."
+
+    return "\n\n".join(lines)
 
 
 def prepare_tool_result(tool_name, result, sources):
-    """Assign consistent reference IDs to web search results."""
+    """Give the model clean text, and collect sources for the final list."""
     if tool_name != "web_search":
         return result
 
     try:
         data = json.loads(result)
 
-        if data.get("type") != "web_search_results":
-            return result
-
-        for item in data.get("results", []):
-            url = item.get("url", "").strip()
-
-            if not url.startswith(("https://", "http://")):
-                continue
-
-            # Reuse an existing reference for duplicate URLs.
-            existing = next(
-                (source for source in sources if source["url"] == url),
-                None,
-            )
-
-            if existing:
-                item["id"] = existing["id"]
-            else:
-                source_id = len(sources) + 1
-
-                source = {
-                    "id": source_id,
-                    "title": item.get("title", "Untitled source"),
-                    "url": url,
-                }
-
-                sources.append(source)
-                item["id"] = source_id
-
-        return json.dumps(data, ensure_ascii=False)
+        if isinstance(data, dict) and data.get("type") == "web_search_results":
+            return format_search_for_model(data, sources)
 
     except (ValueError, TypeError, AttributeError):
-        return result
+        pass
 
-def run_agent(question, history, trace=None):
-    """Run the tool-calling agent and collect web sources."""
+    return str(result)[:MAX_TOOL_RESULT_CHARS]
+
+
+# ---------------- AGENT ----------------
+
+def complete_with_continuation(base_messages, max_tokens):
+    """Call the model; if the reply is cut off, ask it to continue."""
+    response = invoke_with_retry(
+        get_base_model(), base_messages, max_tokens=max_tokens
+    )
+    text = content_to_text(response.content).strip()
+
+    for _ in range(2):
+        if not text or not was_truncated(response):
+            break
+
+        response = invoke_with_retry(
+            get_base_model(),
+            [
+                *base_messages,
+                AIMessage(content=text),
+                HumanMessage(
+                    content="Continue exactly where you stopped. Do not "
+                            "repeat earlier text. Finish every remaining part."
+                ),
+            ],
+            max_tokens=max_tokens,
+        )
+        more = content_to_text(response.content).strip()
+
+        if not more:
+            break
+
+        text += (" " if text[-1].isalnum() else "\n") + more
+
+    return text
+
+
+def generate_final_answer(question, history, gathered, budget=SIMPLE_BUDGET):
+    """Final answer WITHOUT tools.
+
+    The earlier tool calls are NOT replayed here. If they were, the model
+    would copy them and try to call a tool, which Groq rejects when no
+    tools are bound. Results are passed as plain text instead.
+    """
+    if gathered:
+        results_text = "\n\n".join(text for _, text in gathered)
+        results_text = results_text[:budget.final_results_chars]
+
+        instruction = (
+            "Research results gathered so far:\n"
+            f"{results_text}\n\n"
+            "Answer every part of the request completely (all requested "
+            "items, the comparison and the recommendation). Use a short "
+            "Markdown table for comparisons. Cite web sources with their "
+            "[n] reference IDs. If the results are not enough, say so. "
+            "Do not call any tools."
+        )
+    else:
+        results_text = ""
+        instruction = (
+            "No tool results are available. Answer every part of the "
+            "request from your general knowledge, say clearly if you are "
+            "unsure, and add no citations. Do not call any tools."
+        )
+
+    system = SystemMessage(
+        content=build_system_prompt(
+            "\nNo tools are available for this reply. Never call a tool. "
+            "Reply in plain text."
+        )
+    )
+    final_question = HumanMessage(content=f"{question}\n\n{instruction}")
+
+    # Second attempt drops the chat history and allows a longer reply.
+    attempts = (
+        (get_recent_messages(history), budget.reply_tokens),
+        ([], int(budget.reply_tokens * 1.5)),
+    )
+
+    for recent, max_tokens in attempts:
+        try:
+            text = complete_with_continuation(
+                [system, *recent, final_question], max_tokens
+            )
+
+            if text:
+                return text
+
+        except Exception as exc:
+            if not is_tool_failure(exc):
+                raise
+
+    if results_text:
+        return (
+            "I found these results but could not write a summary:\n\n"
+            + results_text[:1500]
+        )
+
+    return "I could not generate an answer. Please rephrase and try again."
+
+
+def run_agent(question, history, trace=None, deep=False):
+    """Run the tool-calling agent. Returns (answer_text, sources).
+
+    deep=True is for research-style questions: several searches run at the
+    same time, then one long final answer is written.
+    """
+    budget = DEEP_BUDGET if deep else SIMPLE_BUDGET
 
     if trace is None:
         trace = []
 
     sources = []
+    gathered = []   # (tool name, text shown to the model)
+    seen_calls = {}
 
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        SystemMessage(content=build_system_prompt()),
         *get_recent_messages(history),
         HumanMessage(content=question),
     ]
 
-    for _ in range(MAX_TOOL_ROUNDS + 1):
+    tool_model = get_tool_model()
+    rounds_done = 0
+    nudged = False
 
-        response = get_tool_model().invoke(messages)
+    for _ in range(budget.tool_rounds + 3):
+
+        if rounds_done >= budget.tool_rounds:
+            break
+
+        try:
+            response = invoke_with_retry(
+                tool_model, messages, max_tokens=budget.reply_tokens
+            )
+        except Exception as exc:
+            if is_tool_failure(exc):
+                break   # fall back to a plain answer below
+            raise
+
         messages.append(response)
 
         tool_calls = getattr(response, "tool_calls", []) or []
 
         if not tool_calls:
-            return content_to_text(response.content), sources
+            text = content_to_text(response.content).strip()
+
+            # Research questions must search first. Remind the model once.
+            if deep and not gathered and not nudged:
+                nudged = True
+                messages.append(
+                    HumanMessage(
+                        content="You must call web_search before answering. "
+                                "Make one short, specific search per topic "
+                                "(up to 5 searches in this step)."
+                    )
+                )
+                continue
+
+            if text and not was_truncated(response):
+                return text, sources
+
+            break
+
+        # Decide which calls to run. Every call still needs a matching
+        # ToolMessage afterwards, otherwise the API returns an error.
+        results_by_index = {}
+        planned = []
 
         for index, tool_call in enumerate(tool_calls):
-
             tool_name = tool_call.get("name") or "tool"
 
-            if index < MAX_TOOLS_PER_ROUND:
-
-                trace.append(tool_name)
-
-                tool_result = run_tool_call(tool_call)
-
-                tool_result = prepare_tool_result(
-                    tool_name,
-                    tool_result,
-                    sources,
+            if index >= budget.tools_per_round:
+                results_by_index[index] = (
+                    "Skipped: too many tool calls requested at once."
                 )
+                continue
 
-            else:
-                tool_result = "Skipped: too many tool calls requested at once."
+            args = sanitize_tool_args(tool_name, tool_call.get("args"))
+            call_key = (tool_name, json.dumps(args, sort_keys=True, default=str))
 
+            if call_key in seen_calls:
+                results_by_index[index] = (
+                    "This exact request was already made. Use the "
+                    "earlier results and give your final answer now."
+                )
+                continue
+
+            seen_calls[call_key] = True
+            trace.append(tool_name)
+            planned.append((index, tool_name, args))
+
+        # Run the allowed calls at the same time (much faster for searches).
+        if planned:
+            def execute(item):
+                _, name, args = item
+                return run_tool_call({"name": name, "args": args})
+
+            with ThreadPoolExecutor(max_workers=len(planned)) as pool:
+                raw_results = list(pool.map(execute, planned))
+
+            for (index, name, _), raw_result in zip(planned, raw_results):
+                text = prepare_tool_result(name, raw_result, sources)
+                results_by_index[index] = text
+                gathered.append((name, text))
+
+        for index, tool_call in enumerate(tool_calls):
             messages.append(
                 ToolMessage(
-                    content=tool_result,
-                    tool_call_id=tool_call.get("id"),
+                    content=results_by_index.get(index, ""),
+                    tool_call_id=tool_call.get("id") or f"call_{index}",
                 )
             )
 
-    # Generate the final response without allowing additional tool calls.
-    messages.append(
-        HumanMessage(
-            content=(
-                "Now provide your final answer using the available tool results. "
-                "Do not request or call any more tools. "
-                "Follow the source citation rules."
-            )
-        )
-    )
+        rounds_done += 1
 
-    final_response = get_base_model().invoke(messages)
+        # Research mode: all searches ran together, so write the answer now.
+        if deep and gathered:
+            break
 
-    return content_to_text(final_response.content), sources
+    return generate_final_answer(question, history, gathered, budget), sources
 
-def format_sources(sources):
-    """Format collected sources as clickable Markdown links."""
+
+def format_sources(sources, answer):
+    """Format sources as clickable Markdown links.
+
+    Lists the sources the answer cites, e.g. [1]. If the answer cites none,
+    lists every source that was consulted.
+    """
     if not sources:
         return ""
 
-    lines = [
-        "",
-        "---",
-        "### 🔗 Sources & References",
-        "",
-    ]
+    cited = {int(n) for n in re.findall(r"\[(\d{1,3})\]", answer or "")}
+    chosen = [s for s in sources if s["id"] in cited] or sources
 
-    for source in sources:
-        source_id = source["id"]
-        title = html.escape(source["title"])
-        url = source["url"]
+    lines = [SOURCES_MARKER, ""]
 
-        lines.append(
-            f"[{source_id}] [{title}]({url})"
-        )
+    for source in chosen:
+        title = re.sub(r"\s+", " ", source["title"]).strip()
+        title = title.replace("[", "(").replace("]", ")") or "Untitled source"
+        url = source["url"].replace(" ", "%20").replace(")", "%29")
+
+        lines.append(f"- **[{source['id']}]** [{title}]({url})")
 
     return "\n".join(lines)
+
+
+# ---------------- VERIFIER SEARCH ADAPTER ----------------
+
+def search_json_to_text(result):
+    """Turn web_search JSON into plain text; pass other text through."""
+    try:
+        data = json.loads(result) if isinstance(result, str) else result
+    except ValueError:
+        return str(result)
+
+    if not isinstance(data, dict) or data.get("type") != "web_search_results":
+        return str(result)
+
+    results = data.get("results") or []
+
+    if not results:
+        return data.get("error") or "No search results found."
+
+    blocks = []
+
+    for item in results:
+        blocks.append(
+            f"{item.get('title', 'Untitled')}\n"
+            f"{item.get('url', '')}\n"
+            f"{item.get('snippet', '')}"
+        )
+
+    return "\n\n".join(blocks)
+
+
+class PlainTextSearch:
+    """Wraps the web_search tool so the claim verifier receives plain text
+    instead of JSON, whichever way verifier.py calls the tool."""
+
+    def __init__(self, search_tool):
+        self._tool = search_tool
+        self.name = getattr(search_tool, "name", "web_search")
+
+        raw_func = getattr(search_tool, "func", None)
+        if callable(raw_func):
+            self.func = lambda *a, **k: search_json_to_text(raw_func(*a, **k))
+
+    def invoke(self, *args, **kwargs):
+        return search_json_to_text(self._tool.invoke(*args, **kwargs))
+
+    def run(self, *args, **kwargs):
+        return search_json_to_text(self._tool.run(*args, **kwargs))
+
+    def __call__(self, *args, **kwargs):
+        if args and not kwargs:
+            payload = args[0]
+        else:
+            payload = kwargs or {}
+
+        return self.invoke(payload)
+
+    def __getattr__(self, item):
+        return getattr(self._tool, item)
+
+
+verifier_search = PlainTextSearch(web_search)
+
+
 # ---------------- DASHBOARD RENDERING ----------------
 
 ICON_PATHS = {
@@ -590,7 +1087,7 @@ def render_cards(cards):
 
     for key, title, desc, ico, color in CARD_DEFS:
         status, stamp = cards.get(key, ("idle", ""))
-        label, pct = STATUS_META[status]
+        label, pct = STATUS_META.get(status, STATUS_META["idle"])
 
         if status == "done":
             mark = f'<span class="cp-mark">{icon("check", 12)}</span>'
@@ -685,33 +1182,6 @@ def dashboard(state, working=False):
     )
 
 
-def run_tool_call(tool_call):
-    """Execute a single tool call and return its result."""
-
-    tool_name = tool_call.get("name")
-    tool_args = tool_call.get("args", {}) or {}
-
-    selected_tool = next(
-        (item for item in tools if item.name == tool_name),
-        None,
-    )
-
-    if selected_tool is None:
-        return "Unknown tool requested."
-
-    try:
-        result = selected_tool.invoke(tool_args)
-        result = str(result)
-
-        # Preserve structured web results.
-        if tool_name == "web_search":
-            return result
-
-        return result[:MAX_TOOL_RESULT_CHARS]
-
-    except Exception as exc:
-        return f"Tool failed: {type(exc).__name__}: {exc}"
-
 def add_log(state, kind, ico, text):
     state["log"].append((kind, ico, text, now_label()))
     state["log"] = state["log"][-MAX_LOG_ENTRIES:]
@@ -720,8 +1190,6 @@ def add_log(state, kind, ico, text):
 # ---------------- CHAT FUNCTION ----------------
 
 def respond(user_message, history, uploaded_file, verify_claims, state):
-    trace = []
-    sources = []
     history = normalize_history(history)
     state = state or new_state()
     question = (user_message or "").strip()
@@ -745,10 +1213,14 @@ def respond(user_message, history, uploaded_file, verify_claims, state):
     }
     yield (pending, "", state, *dashboard(state, working=True))
 
+    # Research-style questions get more searches and a longer answer.
+    deep = is_complex_request(question)
+
     # What the model sees (may include document text).
     agent_question = question
     answer_ok = False
     trace = []
+    sources = []
 
     try:
         if has_file:
@@ -759,7 +1231,7 @@ def respond(user_message, history, uploaded_file, verify_claims, state):
                 + document_text[:MAX_DOCUMENT_CHARS]
             )
 
-        answer ,sources= run_agent(agent_question, history, trace)
+        answer, sources = run_agent(agent_question, history, trace, deep=deep)
 
         if not answer or not str(answer).strip():
             answer = "No response was generated. Please try again."
@@ -768,19 +1240,7 @@ def respond(user_message, history, uploaded_file, verify_claims, state):
 
     except Exception as exc:
         print("AGENT ERROR:", repr(exc))
-        error_text = str(exc)
-
-        if (
-            "413" in error_text
-            or "tokens per minute" in error_text.lower()
-            or "rate_limit_exceeded" in error_text.lower()
-        ):
-            answer = (
-                "Groq's token limit was exceeded. "
-                "Please shorten your question or document."
-            )
-        else:
-            answer = f"An error occurred: {error_text}"
+        answer = friendly_error(exc)
 
     answer = str(answer)
 
@@ -801,6 +1261,8 @@ def respond(user_message, history, uploaded_file, verify_claims, state):
         state["ok"] += 1
         state["seconds_saved"] += SECONDS_SAVED_PER_ANSWER
         add_log(state, "green", "check", f"Answered: {question[:48]}")
+        if deep:
+            add_log(state, "blue", "layers", "Deep research mode: parallel searches")
         for name in dict.fromkeys(trace):
             add_log(state, "blue", "search", f"Tool used: {name}")
         if has_file:
@@ -823,7 +1285,7 @@ def respond(user_message, history, uploaded_file, verify_claims, state):
         report = None
 
         try:
-            report = verify_answer(answer, get_base_model(), web_search)
+            report = verify_answer(answer, get_base_model(), verifier_search)
         except Exception as exc:
             print("VERIFIER ERROR:", repr(exc))
 
@@ -836,7 +1298,12 @@ def respond(user_message, history, uploaded_file, verify_claims, state):
         state["cards"]["verify"] = ("skipped", now_label())
 
     # Add clickable source references to the final answer.
-    answer += format_sources(sources)
+    if answer_ok:
+        try:
+            answer += format_sources(sources, answer)
+        except Exception as exc:
+            print("SOURCES ERROR:", repr(exc))
+
     # Messages format: list of {"role", "content"} dictionaries.
     final_history = history + [
         {"role": "user", "content": question},
@@ -848,6 +1315,8 @@ def respond(user_message, history, uploaded_file, verify_claims, state):
 
 # ---------------- GRADIO INTERFACE ----------------
 
+# Gradio versions differ on where `css` and Chatbot `type` belong,
+# so check what the installed version supports.
 blocks_kwargs = {"title": "Research Copilot AI"}
 launch_kwargs = {}
 
@@ -866,15 +1335,16 @@ chatbot_kwargs = {
 
 if "type" in inspect.signature(gr.Chatbot.__init__).parameters:
     chatbot_kwargs["type"] = "messages"
+
 _initial_state = new_state()
 
-with gr.Blocks(**blocks_kwargs) as demo: # type: ignore
+with gr.Blocks(**blocks_kwargs) as demo:  # type: ignore
 
     app_state = gr.State(new_state())
 
     with gr.Column(elem_id="cp-page"):
 
-        # Existing main container
+        # Main container
         with gr.Row(elem_id="cp-shell", equal_height=False):
 
             # Sidebar
@@ -981,7 +1451,6 @@ with gr.Blocks(**blocks_kwargs) as demo: # type: ignore
 
         gr.HTML(FOOTER_HTML, elem_classes=["cp-flat"])
 
-    # Keep your existing event handling here.
     # ==========================================
     # EVENT HANDLING
     # ==========================================
@@ -1003,24 +1472,14 @@ with gr.Blocks(**blocks_kwargs) as demo: # type: ignore
         app_state,
     ]
 
-    user_message.submit(
-        fn=respond,
-        inputs=inputs,
-        outputs=outputs,
-    )
-
-    send_button.click(
-        fn=respond,
-        inputs=inputs,
-        outputs=outputs,
-    )
+    user_message.submit(fn=respond, inputs=inputs, outputs=outputs)
+    send_button.click(fn=respond, inputs=inputs, outputs=outputs)
 
     clear_button.click(
         fn=lambda: ([], ""),
         inputs=[],
         outputs=[chatbot, user_message],
     )
-
 
 
 if __name__ == "__main__":
