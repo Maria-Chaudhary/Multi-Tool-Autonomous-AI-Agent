@@ -1483,4 +1483,4 @@ with gr.Blocks(**blocks_kwargs) as demo:  # type: ignore
 
 
 if __name__ == "__main__":
-    demo.launch(**launch_kwargs)
+    demo.launch(**launch_kwargs,share=True)
