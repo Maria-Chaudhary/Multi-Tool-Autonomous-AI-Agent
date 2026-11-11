@@ -8,10 +8,6 @@ An AI research assistant that searches the web, reads your documents, does calcu
 ![Gradio](https://img.shields.io/badge/UI-Gradio-purple)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-**🔗 Live demo:** [Hugging Face Space](https://huggingface.co/spaces/YOUR-USERNAME/YOUR-SPACE-NAME)
-
-![Dashboard screenshot](assets/dashboard.png)
-
 ---
 
 ## The problem
